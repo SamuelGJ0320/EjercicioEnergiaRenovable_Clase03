@@ -38,7 +38,15 @@ col2.metric("Capacidad Total (MW)", f"{df['Capacidad_Instalada_MW'].sum():,.0f}"
 col3.metric("Generación Diaria (MWh)", f"{df['Generacion_Diaria_MWh'].sum():,.0f}")
 col4.metric("Inversión Total (M USD)", f"{df['Inversion_Inicial_MUSD'].sum():,.0f}")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+st.sidebar.header("Configuración GROQ")
+api_key = st.sidebar.text_input(
+    "API Key",
+    type="password",
+    placeholder="gsk_...",
+    help="Requerida para el Chatbot y el Extractor de Datos"
+)
+
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Composición Tecnológica",
     "Actores del Mercado",
     "Madurez y Conectividad",
@@ -46,7 +54,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Estadístico (Seaborn)",
     "Clásico (Pyplot)",
     "Reportes",
-    "Chatbot"
+    "Chatbot",
+    "Extractor de Datos"
 ])
 
 with tab1:
@@ -480,12 +489,6 @@ with tab8:
     st.subheader("Chatbot de Cultura General e Historia Mundial")
     st.markdown("Haz preguntas sobre historia, geografía, ciencia, arte y cultura general.")
 
-    api_key = st.text_input(
-        "Ingresa tu API Key de GROQ",
-        type="password",
-        placeholder="gsk_..."
-    )
-
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -500,7 +503,7 @@ with tab8:
 
         if not api_key:
             with st.chat_message("assistant"):
-                st.warning("Escribe tu API Key de GROQ arriba para empezar a conversar.")
+                st.warning("Ingresa tu API Key en la barra lateral para empezar a conversar.")
         else:
             try:
                 client = Groq(api_key=api_key)
@@ -539,7 +542,106 @@ with tab8:
         st.session_state.messages = []
         st.rerun()
 
-st.header("Conclusiones")
+with tab9:
+    st.subheader("Extractor de Datos desde Texto")
+    st.markdown("Pega un párrafo con cifras para convertirlo en tabla y generar un EDA automático.")
+
+    texto = st.text_area("Pega tu texto aquí", height=200, placeholder="Ej: En 2023 la empresa X vendió 1500 unidades en enero, 2300 en febrero y 1800 en marzo...")
+
+    if st.button("Procesar con LLM", disabled=not api_key, type="primary"):
+        if not api_key:
+            st.warning("Ingresa tu API Key en la barra lateral.")
+        elif not texto.strip():
+            st.warning("Pega un texto antes de procesar.")
+        else:
+            with st.spinner("Extrayendo datos estructurados..."):
+                try:
+                    client = Groq(api_key=api_key)
+                    resp = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Eres un extractor de datos. Del siguiente texto, extrae toda la información "
+                                    "numérica y categórica relevante y conviértela a formato CSV. "
+                                    "La primera fila deben ser los encabezados. "
+                                    "Devuelve SOLAMENTE el CSV, sin explicaciones, sin comillas triples, sin delimitadores de código."
+                                )
+                            },
+                            {"role": "user", "content": texto}
+                        ],
+                        temperature=0.1
+                    )
+                    csv_text = resp.choices[0].message.content.strip()
+
+                    lines = [l for l in csv_text.split("\n") if l.strip()]
+                    csv_io = io.StringIO("\n".join(lines))
+                    df_ext = pd.read_csv(csv_io)
+
+                    if df_ext.empty:
+                        st.error("No se pudo extraer una tabla del texto.")
+                    else:
+                        st.success(f"Tabla extraída: {df_ext.shape[0]} filas, {df_ext.shape[1]} columnas.")
+                        st.subheader("Tabla extraída")
+                        st.dataframe(df_ext, use_container_width=True)
+
+                        st.subheader("Análisis Exploratorio (EDA)")
+
+                        st.markdown("**Estadísticas descriptivas**")
+                        st.dataframe(df_ext.describe(include="all").fillna(""), use_container_width=True)
+
+                        num_cols = df_ext.select_dtypes(include=np.number).columns.tolist()
+                        cat_cols = df_ext.select_dtypes(exclude=np.number).columns.tolist()
+
+                        if num_cols:
+                            for col in num_cols[:4]:
+                                fig_hist = px.histogram(df_ext, x=col, title=f"Distribución de {col}", nbins=20)
+                                st.plotly_chart(fig_hist, use_container_width=True)
+
+                        if len(num_cols) >= 2:
+                            fig_box = px.box(df_ext.melt(value_vars=num_cols[:6]), x="variable", y="value",
+                                             title="Boxplots de variables numéricas")
+                            st.plotly_chart(fig_box, use_container_width=True)
+
+                            fig_corr = px.imshow(
+                                df_ext[num_cols].corr(), text_auto=True, aspect="auto",
+                                title="Matriz de correlación", color_continuous_scale="RdBu_r"
+                            )
+                            st.plotly_chart(fig_corr, use_container_width=True)
+
+                            if len(num_cols) >= 2:
+                                fig_scatter = px.scatter_matrix(df_ext[num_cols[:5]], title="Relaciones entre variables")
+                                st.plotly_chart(fig_scatter, use_container_width=True)
+
+                        if cat_cols:
+                            for col in cat_cols[:3]:
+                                counts = df_ext[col].value_counts().reset_index()
+                                counts.columns = [col, "Cantidad"]
+                                fig_bar = px.bar(counts, x=col, y="Cantidad",
+                                                 title=f"Distribución de {col}", text_auto=True)
+                                st.plotly_chart(fig_bar, use_container_width=True)
+
+                        st.subheader("Análisis del LLM")
+                        with st.spinner("Generando análisis..."):
+                            analysis = client.chat.completions.create(
+                                model="llama-3.3-70b-versatile",
+                                messages=[
+                                    {
+                                        "role": "system",
+                                        "content": (
+                                            "Eres un analista de datos. Resume los hallazgos clave de la siguiente tabla "
+                                            "en 3-5 puntos. Sé conciso y numérico."
+                                        )
+                                    },
+                                    {"role": "user", "content": df_ext.to_csv(index=False)}
+                                ],
+                                temperature=0.3
+                            )
+                            st.markdown(analysis.choices[0].message.content)
+
+                except Exception as e:
+                    st.error(f"Error al procesar: {e}", icon="🚨")
 st.markdown(f"""
 - **Mix tecnológico diversificado:** {df['Tecnologia'].nunique()} tecnologías distintas operando en el país.
 - **Liderazgo en operación:** {top_ops.iloc[0]['Operador']} lidera en cantidad de proyectos,
