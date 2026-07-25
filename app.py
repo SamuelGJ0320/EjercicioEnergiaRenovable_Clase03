@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
 from fpdf import FPDF
+from groq import Groq
 
 st.set_page_config(page_title="Dashboard Energía Renovable", layout="wide")
 
@@ -37,14 +38,15 @@ col2.metric("Capacidad Total (MW)", f"{df['Capacidad_Instalada_MW'].sum():,.0f}"
 col3.metric("Generación Diaria (MWh)", f"{df['Generacion_Diaria_MWh'].sum():,.0f}")
 col4.metric("Inversión Total (M USD)", f"{df['Inversion_Inicial_MUSD'].sum():,.0f}")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Composición Tecnológica",
     "Actores del Mercado",
     "Madurez y Conectividad",
     "Evolución Temporal",
     "Estadístico (Seaborn)",
     "Clásico (Pyplot)",
-    "Reportes"
+    "Reportes",
+    "Chatbot"
 ])
 
 with tab1:
@@ -473,6 +475,63 @@ with tab7:
     st.markdown("- Proyectos por año")
     st.markdown("- Top 10 operadores por inversión")
     st.markdown("- Conclusiones del análisis")
+
+with tab8:
+    st.subheader("Chatbot de Cultura General e Historia Mundial")
+    st.markdown("Haz preguntas sobre historia, geografía, ciencia, arte y cultura general.")
+
+    api_key = st.text_input(
+        "Ingresa tu API Key de GROQ",
+        type="password",
+        placeholder="gsk_..."
+    )
+
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    if prompt := st.chat_input("Escribe tu pregunta aquí..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        if api_key:
+            with st.chat_message("assistant"):
+                with st.spinner("Pensando..."):
+                    try:
+                        client = Groq(api_key=api_key)
+                        system_msg = {
+                            "role": "system",
+                            "content": (
+                                "Eres un experto en cultura general e historia mundial. "
+                                "Respondes de forma clara, precisa y educativa. "
+                                "Usas un tono amigable y accesible. "
+                                "Cuando te pregunten sobre historia, incluyes contexto relevante, fechas y personajes clave. "
+                                "Si no sabes algo, lo admites sin inventar."
+                            )
+                        }
+                        chat_history = [system_msg]
+                        for m in st.session_state.messages:
+                            chat_history.append({"role": m["role"], "content": m["content"]})
+                        response = client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=chat_history,
+                            stream=True
+                        )
+                        full_response = st.write_stream(response)
+                    except Exception as e:
+                        full_response = f"Error: {e}"
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+        else:
+            with st.chat_message("assistant"):
+                st.warning("Escribe tu API Key de GROQ arriba para empezar a conversar.")
+
+    if st.session_state.messages and st.button("Limpiar conversación"):
+        st.session_state.messages = []
+        st.rerun()
 
 st.header("Conclusiones")
 st.markdown(f"""
