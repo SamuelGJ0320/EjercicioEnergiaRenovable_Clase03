@@ -498,36 +498,42 @@ with tab8:
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        if api_key:
-            with st.chat_message("assistant"):
-                with st.spinner("Pensando..."):
-                    try:
-                        client = Groq(api_key=api_key)
-                        system_msg = {
-                            "role": "system",
-                            "content": (
-                                "Eres un experto en cultura general e historia mundial. "
-                                "Respondes de forma clara, precisa y educativa. "
-                                "Usas un tono amigable y accesible. "
-                                "Cuando te pregunten sobre historia, incluyes contexto relevante, fechas y personajes clave. "
-                                "Si no sabes algo, lo admites sin inventar."
-                            )
-                        }
-                        chat_history = [system_msg]
-                        for m in st.session_state.messages:
-                            chat_history.append({"role": m["role"], "content": m["content"]})
-                        response = client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=chat_history,
-                            stream=True
-                        )
-                        full_response = st.write_stream(response)
-                    except Exception as e:
-                        full_response = f"Error: {e}"
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
-        else:
+        if not api_key:
             with st.chat_message("assistant"):
                 st.warning("Escribe tu API Key de GROQ arriba para empezar a conversar.")
+        else:
+            try:
+                client = Groq(api_key=api_key)
+                system_msg = {
+                    "role": "system",
+                    "content": (
+                        "Eres un experto en cultura general e historia mundial. "
+                        "Respondes de forma clara, precisa y educativa. "
+                        "Usas un tono amigable y accesible. "
+                        "Cuando te pregunten sobre historia, incluyes contexto relevante, fechas y personajes clave. "
+                        "Si no sabes algo, lo admites sin inventar."
+                    )
+                }
+                chat_history = [system_msg]
+                for m in st.session_state.messages:
+                    chat_history.append({"role": m["role"], "content": m["content"]})
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=chat_history,
+                    stream=True
+                )
+                with st.chat_message("assistant"):
+                    placeholder = st.empty()
+                    full_response = ""
+                    for chunk in response:
+                        content = chunk.choices[0].delta.content or ""
+                        full_response += content
+                        placeholder.markdown(full_response + "▌")
+                    placeholder.markdown(full_response)
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+            except Exception as e:
+                with st.chat_message("assistant"):
+                    st.error(f"Error: {e}", icon="🚨")
 
     if st.session_state.messages and st.button("Limpiar conversación"):
         st.session_state.messages = []
